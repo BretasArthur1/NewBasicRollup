@@ -8,11 +8,10 @@ use solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph, ProgramC
 use solana_sdk::account::ReadableAccount;
 use solana_sdk::clock::Slot;
 use solana_sdk::compute_budget::ComputeBudgetInstruction;
-use solana_sdk::fee::{FeeDetails, FeeStructure};
+use solana_sdk::fee::FeeStructure;
 use solana_sdk::hash::Hash;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::rent_collector::RentCollector;
-use solana_sdk::signature::Keypair;
 use solana_sdk::transaction;
 use solana_sdk::{
     account::AccountSharedData,
@@ -26,6 +25,7 @@ use solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1;
 use solana_compute_budget::compute_budget::ComputeBudget;
 use solana_svm::account_loader::CheckedTransactionDetails;
 use solana_svm::transaction_processing_callback::TransactionProcessingCallback;
+use solana_svm::transaction_processing_result::ProcessedTransaction;
 use solana_svm::transaction_processor::{TransactionBatchProcessor, TransactionProcessingConfig, TransactionProcessingEnvironment};
 // use solana_svm_callback::InvokeContextCallback;
 use solana_system_program::system_processor;
@@ -36,13 +36,18 @@ mod error;
 /// `RpcClientExt` is an extension trait for the rust solana client.
 /// This crate provides extensions for the Solana Rust client, focusing on compute unit estimation and optimization.
 /// 
+/// The crate also provides a robust `ReturnStruct` that includes:
+/// * Transaction success/failure status
+/// * Compute units used
+/// * Detailed result message with success information or error details
+/// 
 /// /// This function is also a mock. In the Agave validator, the bank pre-checks
 /// transactions before providing them to the SVM API. We mock this step in
 /// PayTube, since we don't need to perform such pre-checks.
 pub(crate) fn get_transaction_check_results(
     len: usize,
 ) -> Vec<transaction::Result<CheckedTransactionDetails>> {
-    let compute_budget_limit = ComputeBudgetLimits::default();
+    let _compute_budget_limit = ComputeBudgetLimits::default();
     vec![
         transaction::Result::Ok(CheckedTransactionDetails::new(
             None,
@@ -50,6 +55,50 @@ pub(crate) fn get_transaction_check_results(
         ));
         len
     ]
+}
+
+/// Return structure for rollup transaction processing results
+/// 
+/// This structure provides information about a transaction's execution:
+/// - Whether it was successful
+/// - The amount of compute units used
+/// - A descriptive message with detailed results or error information
+pub struct ReturnStruct{
+    /// Whether the transaction completed successfully
+    pub success: bool,
+    /// The number of compute units used by the transaction
+    pub cu: u64,
+    /// A descriptive result or error message
+    pub result: String,  
+}
+
+impl ReturnStruct {
+    /// Create a success result with compute units used
+    pub fn success(cu: u64) -> Self {
+        Self {
+            success: true,
+            cu,
+            result: format!("Transaction executed successfully with {} compute units", cu),
+        }
+    }
+
+    /// Create a failure result with an error message
+    pub fn failure(error: impl ToString) -> Self {
+        Self {
+            success: false,
+            cu: 0,
+            result: error.to_string(),
+        }
+    }
+
+    /// Create a result indicating no transaction results were returned
+    pub fn no_results() -> Self {
+        Self {
+            success: false,
+            cu: 0,
+            result: "No transaction results returned".to_string(),
+        }
+    }
 }
 
 pub struct RollUpChannel<'a> {
@@ -63,7 +112,7 @@ impl<'a> RollUpChannel<'a> {
         Self { keys, rpc_client }
     }
 
-    pub fn process_rollup_transfers(&self, transactions: &[Transaction])-> Vec<u64> {
+    pub fn process_rollup_transfers(&self, transactions: &[Transaction]) -> Vec<ReturnStruct> {
         
         let sanitized = transactions.iter().map( |tx|
             SolanaSanitizedTransaction::from_transaction_for_tests(tx.clone())
@@ -78,7 +127,7 @@ impl<'a> RollUpChannel<'a> {
         let compute_budget = ComputeBudget::default();
         let feature_set = Arc::new(FeatureSet::all_enabled());
         let fee_structure = FeeStructure::default();
-        let rent_collector = RentCollector::default();
+        let _rent_collector = RentCollector::default();
 
         // PayTube loader/callback implementation.
         //
@@ -141,12 +190,58 @@ impl<'a> RollUpChannel<'a> {
         );
         println!("Executed");
 
-        let cu = results.processing_results.iter().map(|transaction_results|{
-            let px = transaction_results.as_ref();
-            println!("{px:?}");
-            px.unwrap().executed_units()
-        }).collect();
-        cu
+        // Process all transaction results
+        let mut return_results = Vec::new();
+        
+        for (i, transaction_result) in results.processing_results.iter().enumerate() {
+            let tx_result = match transaction_result {
+                Ok(processed_tx) => {
+                    match processed_tx {
+                        ProcessedTransaction::Executed(executed_tx) => {
+                            let cu = executed_tx.execution_details.executed_units;
+                            let logs = executed_tx.execution_details.log_messages.clone();
+                            let status = executed_tx.execution_details.status.clone();
+                            let is_success = status.is_ok();
+                            
+                            if is_success {
+                                ReturnStruct::success(cu)
+                            } else {
+                                match status {
+                                    Err(err) => {
+                                        let error_msg = format!("Transaction {} failed with error: {}", i, err);
+                                        let log_msg = logs.map(|logs| logs.join("\n")).unwrap_or_default();
+                                        ReturnStruct {
+                                            success: false,
+                                            cu,
+                                            result: format!("{}\nLogs:\n{}", error_msg, log_msg),
+                                        }
+                                    },
+                                    _ => ReturnStruct::success(cu), // This shouldn't happen as we checked is_success
+                                }
+                            }
+                        },
+                        ProcessedTransaction::FeesOnly(fees_only) => {
+                            ReturnStruct::failure(format!(
+                                "Transaction {} failed with error: {}. Only fees were charged.", 
+                                i, 
+                                fees_only.load_error
+                            ))
+                        },
+                    }
+                },
+                Err(err) => {
+                    ReturnStruct::failure(format!("Transaction {} failed: {}", i, err))
+                }
+            };
+            return_results.push(tx_result);
+        }
+        
+        // If there were no results but transactions were submitted
+        if return_results.is_empty() && !transactions.is_empty() {
+            return_results.push(ReturnStruct::no_results());
+        }
+        
+        return_results
 
         // Step 3: Convert the SVM API processor results into a final ledger
         // using `PayTubeSettler`, and settle the resulting balance differences
@@ -159,7 +254,6 @@ impl<'a> RollUpChannel<'a> {
         // The final ledger of debits and credits to each participant can then
         // be packaged into a minimal number of settlement transactions for
         // submission.
-
     }
 }
 
@@ -260,24 +354,39 @@ pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallba
     processor
 }
 pub trait RpcClientExt {
+    /// Estimates compute units for an unsigned transaction
+    /// 
+    /// Returns a vector of compute unit values for each transaction processed.
+    /// If any transaction fails, returns an error with detailed failure information.
     fn estimate_compute_units_unsigned_tx<'a, I: Signers + ?Sized>(
         &self,
-        unsigned_transaction: &Transaction,
-        signers: &'a I,
+        transaction: &Transaction,
+        _signers: &'a I,
     ) -> Result<Vec<u64>, Box<dyn std::error::Error + 'static>>;
 
+    /// Estimates compute units for a message
+    /// 
+    /// Simulates the transaction on the network to determine compute unit usage.
     fn estimate_compute_units_msg<'a, I: Signers + ?Sized>(
         &self,
         msg: &Message,
         signers: &'a I,
     ) -> Result<u64, Box<dyn std::error::Error + 'static>>;
 
+    /// Optimizes compute units for an unsigned transaction
+    /// 
+    /// Adds a compute budget instruction to the transaction to limit compute units
+    /// to the optimal amount needed based on simulation.
     fn optimize_compute_units_unsigned_tx<'a, I: Signers + ?Sized>(
         &self,
         unsigned_transaction: &mut Transaction,
         signers: &'a I,
     ) -> Result<u32, Box<dyn std::error::Error + 'static>>;
 
+    /// Optimizes compute units for a message
+    /// 
+    /// Adds a compute budget instruction to the message to limit compute units
+    /// to the optimal amount needed based on simulation.
     fn optimize_compute_units_msg<'a, I: Signers + ?Sized>(
         &self,
         message: &mut Message,
@@ -295,8 +404,26 @@ impl RpcClientExt for solana_client::rpc_client::RpcClient {
 
         let accounts = transaction.message.account_keys.clone();
         let rollup_c = RollUpChannel::new(accounts, self);
-        let used_cu = rollup_c.process_rollup_transfers(&[transaction.clone()]);
-        Ok(used_cu)
+        let results = rollup_c.process_rollup_transfers(&[transaction.clone()]);
+        
+        // Check if all transactions were successful
+        let failures: Vec<&ReturnStruct> = results.iter()
+            .filter(|r| !r.success)
+            .collect();
+            
+        if !failures.is_empty() {
+            let error_messages = failures.iter()
+                .map(|r| r.result.clone())
+                .collect::<Vec<String>>()
+                .join("\n");
+                
+            return Err(Box::new(SolanaClientExtError::ComputeUnitsError(
+                format!("Transaction simulation failed:\n{}", error_messages),
+            )));
+        }
+        
+        // Extract compute units from successful transactions
+        Ok(results.iter().map(|r| r.cu).collect())
     }
 
     fn estimate_compute_units_msg<'a, I: Signers + ?Sized>(
@@ -354,37 +481,35 @@ impl RpcClientExt for solana_client::rpc_client::RpcClient {
     /// only the required compute units from the ComputeBudget program
     /// to complete the transaction with this Message.
     ///
-    /// ```
+    /// ```no_run
     /// use solana_client::rpc_client::RpcClient;
     /// use solana_client_ext::RpcClientExt;
     /// use solana_sdk::{
-    ///     message::Message, signature::read_keypair_file, signer::Signer, system_instruction,
+    ///     message::Message, signature::Keypair, signer::Signer, system_instruction,
     ///     transaction::Transaction,
     /// };
     /// fn main() {
     ///     let rpc_client = RpcClient::new("https://api.devnet.solana.com");
-    ///     let keypair = read_keypair_file("~/.config/solana/id.json").unwrap();
-    ///     let keypair2 = read_keypair_file("~/.config/solana/_id.json").unwrap();
+    ///     let keypair = Keypair::new();
+    ///     let keypair2 = Keypair::new();
     ///     let created_ix = system_instruction::transfer(&keypair.pubkey(), &keypair2.pubkey(), 10000);
     ///     let mut msg = Message::new(&[created_ix], Some(&keypair.pubkey()));
     ///
     ///     let optimized_cu = rpc_client
     ///         .optimize_compute_units_msg(&mut msg, &[&keypair])
     ///         .unwrap();
-    ///     println!("optimized cu {}", optimized_cu);
+    ///     println!("Optimized compute units: {}", optimized_cu);
     ///
-    ///     let tx = Transaction::new(&[keypair], msg, rpc_client.get_latest_blockhash().unwrap());
+    ///     let tx = Transaction::new(&[&keypair], msg, rpc_client.get_latest_blockhash().unwrap());
     ///     let result = rpc_client
     ///         .send_and_confirm_transaction_with_spinner(&tx)
     ///         .unwrap();
     ///
     ///     println!(
-    ///         "sig https://explorer.solana.com/tx/{}?cluster=devnet",
+    ///         "Transaction signature: https://explorer.solana.com/tx/{}?cluster=devnet",
     ///         result
     ///     );
     /// }
-    ///
-    ///
     /// ```
     fn optimize_compute_units_msg<'a, I: Signers + ?Sized>(
         &self,
@@ -405,11 +530,7 @@ impl RpcClientExt for solana_client::rpc_client::RpcClient {
 
 #[cfg(test)]
 mod tests {
-    use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::Signer, system_instruction,commitment_config::CommitmentConfig};
-    use std::{thread, time::Duration};
-    use solana_client::rpc_response::Response;
-    
-
+    use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::Signer, system_instruction};
     use super::*;
 
     #[test]
@@ -422,21 +543,102 @@ mod tests {
         let msg = Message::new(&[transfer_ix], Some(&new_keypair.pubkey()));
         let blockhash = rpc_client.get_latest_blockhash().unwrap();
         let mut tx = Transaction::new(&[&new_keypair], msg, blockhash);
-        let _optimized_cu = rpc_client
+        
+        // Test direct ReturnStruct results from process_rollup_transfers
+        let accounts = tx.message.account_keys.clone();
+        let rollup_c = RollUpChannel::new(accounts, &rpc_client);
+        let results = rollup_c.process_rollup_transfers(&[tx.clone()]);
+        
+        println!("Direct rollup results:");
+        for (i, result) in results.iter().enumerate() {
+            println!("Transaction {}: Success={}, CU={}, Result: {}", 
+                i, result.success, result.cu, result.result);
+        }
+        
+        // Test through optimize_compute_units_unsigned_tx
+        let optimized_cu = rpc_client
             .optimize_compute_units_unsigned_tx(&mut tx, &[&new_keypair])
             .unwrap();
 
-        println!("{_optimized_cu}");
-        // let tx = Transaction::new(&[&new_keypair], msg, blockhash);
+        println!("Optimized CU: {}", optimized_cu);
+        
+        // Sign and send the transaction
         tx.sign(&[new_keypair], blockhash);
 
         let result = rpc_client
             .send_and_confirm_transaction_with_spinner(&tx)
             .unwrap();
         println!(
-            "sig https://explorer.solana.com/tx/{}?cluster=devnet",
-            result
+            "Transaction signature: {} (https://explorer.solana.com/tx/{}?cluster=devnet)",
+            result, result
         );
-        println!("{:?}", tx);
+        
+        // Get transaction details
+        println!("Transaction details: {:?}", tx);
+    }
+    
+    #[test]
+    fn test_return_struct() {
+        // Test ReturnStruct helper methods
+        let success_result = ReturnStruct::success(5000);
+        assert_eq!(success_result.success, true);
+        assert_eq!(success_result.cu, 5000);
+        
+        let failure_result = ReturnStruct::failure("Test error message");
+        assert_eq!(failure_result.success, false);
+        assert_eq!(failure_result.cu, 0);
+        assert_eq!(failure_result.result, "Test error message");
+        
+        let no_results = ReturnStruct::no_results();
+        assert_eq!(no_results.success, false);
+        assert_eq!(no_results.result, "No transaction results returned");
+    }
+    
+    #[test]
+    fn test_failed_transaction() {
+        let rpc_client = solana_client::rpc_client::RpcClient::new("https://api.devnet.solana.com");
+        
+        // Create a new keypair with no funds
+        let empty_keypair = Keypair::new();
+        
+        // Try to transfer more SOL than the account would have (1 SOL)
+        let transfer_ix = system_instruction::transfer(
+            &empty_keypair.pubkey(),
+            &Pubkey::new_unique(),
+            1_000_000_000 // 1 SOL in lamports
+        );
+        
+        let msg = Message::new(&[transfer_ix], Some(&empty_keypair.pubkey()));
+        let blockhash = rpc_client.get_latest_blockhash().unwrap();
+        let tx = Transaction::new(&[&empty_keypair], msg, blockhash);
+        
+        // Process the transaction - should fail due to insufficient funds
+        let accounts = tx.message.account_keys.clone();
+        let rollup_c = RollUpChannel::new(accounts, &rpc_client);
+        let results = rollup_c.process_rollup_transfers(&[tx.clone()]);
+        
+        println!("Failed transaction test results:");
+        for (i, result) in results.iter().enumerate() {
+            println!("Transaction {}: Success={}, CU={}, Result: {}", 
+                i, result.success, result.cu, result.result);
+            
+            // Verify that the transaction failed
+            assert!(!result.success, "Transaction should have failed");
+            
+            // The error message should contain information about the failure
+            assert!(result.result.contains("failed"), "Error message should indicate failure");
+        }
+        
+        // Test optimize_compute_units_unsigned_tx with a failing transaction
+        let mut failing_tx = tx.clone();
+        let result = rpc_client.optimize_compute_units_unsigned_tx(&mut failing_tx, &[&empty_keypair]);
+        
+        // Should return an error
+        assert!(result.is_err(), "optimize_compute_units_unsigned_tx should return an error for a failing transaction");
+        
+        if let Err(e) = result {
+            println!("Expected error from optimize_compute_units_unsigned_tx: {}", e);
+            assert!(e.to_string().contains("failed"), "Error message should indicate failure");
+        }
     }
 }
