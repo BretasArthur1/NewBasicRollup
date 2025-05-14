@@ -8,7 +8,7 @@ repository = "https://github.com/BretasArthur1/Solana-Rust-Client-Extension"
 documentation = "https://docs.rs/solana_client_ext"
 homepage = "https://github.com/BretasArthur1/Solana-Rust-Client-Extension"
 license = "MIT OR Apache-2.0"
-keywords = ["solana", "rpc", "client", "transaction", "compute-units", "optimization"]
+keywords = ["solana", "blockchain", "compute-units", "transaction", "rollup"]
 categories = ["solana"]
 
 [dependencies]
