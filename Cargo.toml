@@ -9,7 +9,8 @@ documentation = "https://docs.rs/solana_client_ext"
 homepage = "https://github.com/BretasArthur1/Solana-Rust-Client-Extension"
 license = "MIT OR Apache-2.0"
 keywords = ["solana", "blockchain", "compute-units", "transaction", "rollup"]
-categories = ["solana"]
+categories = ["cryptography::cryptocurrencies", "api-bindings", "development-tools"]
+
 
 [dependencies]
 solana-client = "2.2.2"
