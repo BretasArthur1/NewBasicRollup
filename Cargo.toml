@@ -1,6 +1,6 @@
 [package]
 name = "solana_client_ext"
-version = "0.2.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["BretasArthur1 arthurbretas@gmail.com", "bergabman bergabman1@gmail.com"]
 description = "Solana rust client extension for efficient transaction optimization"
