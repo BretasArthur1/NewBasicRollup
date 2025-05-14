@@ -16,7 +16,7 @@ To use this crate, add it to your `Cargo.toml` file:
 
 ```toml
 [dependencies]
-solana-client-ext = { git = "https://github.com/bergabman/Solana-Rust-Client-Extension.git", version ="0.1.0"} # Replace with the right version
+solana-client-ext = { git = "https://github.com/BretasArthur1/Solana-Rust-Client-Extension", version ="0.1.1"} # Replace with the right version
 ```
 
 ### Basic Usage Example

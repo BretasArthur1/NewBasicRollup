@@ -1,12 +1,16 @@
 [package]
 name = "solana_client_ext"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["BretasArthur1 arthurbretas@gmail.com", "bergabman bergabman1@gmail.com"]
-description = "Solana rust client extension for efficient transaction optimization"
-license = "MIT OR Apache-2.0" # Or any other license you choose
-keywords = ["solana", "rpc", "client", "transaction", "compute-units", "optimization"]
-categories = ["solana"] # Optional: Category for crates.io browsing
+description = "Solana client extension for compute unit optimization and detailed transaction results"
+repository = "https://github.com/BretasArthur1/Solana-Rust-Client-Extension"
+documentation = "https://docs.rs/solana_client_ext"
+homepage = "https://github.com/BretasArthur1/Solana-Rust-Client-Extension"
+license = "MIT OR Apache-2.0"
+keywords = ["solana", "blockchain", "compute-units", "transaction", "rollup"]
+categories = ["cryptography::cryptocurrencies", "api-bindings", "development-tools"]
+
 
 [dependencies]
 solana-client = "2.2.2"
