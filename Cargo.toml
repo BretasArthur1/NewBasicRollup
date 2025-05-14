@@ -2,7 +2,7 @@
 name = "solana_client_ext"
 version = "0.1.0"
 edition = "2021"
-authors = ["bergabman bergabman1@gmail.com"]
+authors = ["BretasArthur1 arthurbretas@gmail.com", "bergabman bergabman1@gmail.com"]
 description = "Solana rust client extension for efficient transaction optimization"
 license = "MIT OR Apache-2.0" # Or any other license you choose
 keywords = ["solana", "rpc", "client", "transaction", "compute-units", "optimization"]
