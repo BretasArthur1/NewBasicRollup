@@ -1,6 +1,6 @@
 use solana_client_ext::*;
 
-use crate::state::return_struct::ReturnStruct;
+use crate::ReturnStruct;
 
 #[test]
 fn test_return_struct() {
