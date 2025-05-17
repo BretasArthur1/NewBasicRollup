@@ -1,16 +1,18 @@
 use std::sync::{Arc, RwLock};
 
+use solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1;
+use solana_compute_budget::{
+    compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
+};
+use solana_program_runtime::loaded_programs::ProgramCacheEntry;
 use solana_sdk::transaction;
 use solana_svm::account_loader::CheckedTransactionDetails;
-use solana_compute_budget::{compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits};
 use solana_svm::transaction_processing_callback::TransactionProcessingCallback;
 use solana_svm::transaction_processor::TransactionBatchProcessor;
-use solana_program_runtime::loaded_programs::ProgramCacheEntry;
 use solana_system_program::system_processor;
-use solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1;
 
-use agave_feature_set::FeatureSet;
 use crate::ForkRollUpGraph;
+use agave_feature_set::FeatureSet;
 
 /// This function is also a mock. In the Agave validator, the bank pre-checks
 /// transactions before providing them to the SVM API. We mock this step in
@@ -19,13 +21,7 @@ pub(crate) fn get_transaction_check_results(
     len: usize,
 ) -> Vec<transaction::Result<CheckedTransactionDetails>> {
     let _compute_budget_limit = ComputeBudgetLimits::default();
-    vec![
-        transaction::Result::Ok(CheckedTransactionDetails::new(
-            None,
-            5000,
-        ));
-        len
-    ]
+    vec![transaction::Result::Ok(CheckedTransactionDetails::new(None, 5000,)); len]
 }
 
 /// This function encapsulates some initial setup required to tweak the

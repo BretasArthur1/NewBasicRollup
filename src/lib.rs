@@ -1,39 +1,30 @@
 use error::SolanaClientExtError;
-use solana_client::{rpc_config::RpcSimulateTransactionConfig};
+use solana_client::rpc_config::RpcSimulateTransactionConfig;
 use solana_sdk::compute_budget::ComputeBudgetInstruction;
-use solana_sdk::{
-    message::Message,
-    signers::Signers,
-    transaction::Transaction,
-};
+use solana_sdk::{message::Message, signers::Signers, transaction::Transaction};
 // use solana_svm_callback::InvokeContextCallback;
 mod error;
 pub mod state;
 mod utils;
 
-use crate::state::{
-    fork_rollup_graph::ForkRollUpGraph,
-};
+use crate::state::fork_rollup_graph::ForkRollUpGraph;
 
-pub use state::{
-    rollup_channel::RollUpChannel,
-    return_struct::ReturnStruct,
-};
+pub use state::{return_struct::ReturnStruct, rollup_channel::RollUpChannel};
 
 /// # RpcClientExt
 ///
 /// `RpcClientExt` is an extension trait for the rust solana client.
 /// This crate provides extensions for the Solana Rust client, focusing on compute unit estimation and optimization.
-/// 
+///
 /// The crate also provides a robust `ReturnStruct` that includes:
 /// * Transaction success/failure status
 /// * Compute units used
 /// * Detailed result message with success information or error details
-/// 
+///
 
 pub trait RpcClientExt {
     /// Estimates compute units for an unsigned transaction
-    /// 
+    ///
     /// Returns a vector of compute unit values for each transaction processed.
     /// If any transaction fails, returns an error with detailed failure information.
     fn estimate_compute_units_unsigned_tx<'a, I: Signers + ?Sized>(
@@ -43,7 +34,7 @@ pub trait RpcClientExt {
     ) -> Result<Vec<u64>, Box<dyn std::error::Error + 'static>>;
 
     /// Estimates compute units for a message
-    /// 
+    ///
     /// Simulates the transaction on the network to determine compute unit usage.
     fn estimate_compute_units_msg<'a, I: Signers + ?Sized>(
         &self,
@@ -52,7 +43,7 @@ pub trait RpcClientExt {
     ) -> Result<u64, Box<dyn std::error::Error + 'static>>;
 
     /// Optimizes compute units for an unsigned transaction
-    /// 
+    ///
     /// Adds a compute budget instruction to the transaction to limit compute units
     /// to the optimal amount needed based on simulation.
     fn optimize_compute_units_unsigned_tx<'a, I: Signers + ?Sized>(
@@ -62,7 +53,7 @@ pub trait RpcClientExt {
     ) -> Result<u32, Box<dyn std::error::Error + 'static>>;
 
     /// Optimizes compute units for a message
-    /// 
+    ///
     /// Adds a compute budget instruction to the message to limit compute units
     /// to the optimal amount needed based on simulation.
     fn optimize_compute_units_msg<'a, I: Signers + ?Sized>(
@@ -83,23 +74,23 @@ impl RpcClientExt for solana_client::rpc_client::RpcClient {
         let accounts = transaction.message.account_keys.clone();
         let rollup_c = RollUpChannel::new(accounts, self);
         let results = rollup_c.process_rollup_transfers(&[transaction.clone()]);
-        
+
         // Check if all transactions were successful
-        let failures: Vec<&ReturnStruct> = results.iter()
-            .filter(|r| !r.success)
-            .collect();
-            
+        let failures: Vec<&ReturnStruct> = results.iter().filter(|r| !r.success).collect();
+
         if !failures.is_empty() {
-            let error_messages = failures.iter()
+            let error_messages = failures
+                .iter()
                 .map(|r| r.result.clone())
                 .collect::<Vec<String>>()
                 .join("\n");
-                
-            return Err(Box::new(SolanaClientExtError::ComputeUnitsError(
-                format!("Transaction simulation failed:\n{}", error_messages),
-            )));
+
+            return Err(Box::new(SolanaClientExtError::ComputeUnitsError(format!(
+                "Transaction simulation failed:\n{}",
+                error_messages
+            ))));
         }
-        
+
         // Extract compute units from successful transactions
         Ok(results.iter().map(|r| r.cu).collect())
     }
@@ -140,9 +131,8 @@ impl RpcClientExt for solana_client::rpc_client::RpcClient {
         let optimal_cu_vec = self.estimate_compute_units_unsigned_tx(transaction, signers)?;
         let optimal_cu = *optimal_cu_vec.get(0).unwrap() as u32;
 
-        let optimize_ix = ComputeBudgetInstruction::set_compute_unit_limit(
-            optimal_cu.saturating_add(optimal_cu),
-        );
+        let optimize_ix =
+            ComputeBudgetInstruction::set_compute_unit_limit(optimal_cu.saturating_add(optimal_cu));
         transaction
             .message
             .account_keys

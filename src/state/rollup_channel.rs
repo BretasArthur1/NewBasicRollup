@@ -1,24 +1,22 @@
 use std::sync::{Arc, RwLock};
 
+use solana_client::rpc_client::RpcClient;
+use solana_compute_budget::compute_budget::ComputeBudget;
+use solana_sdk::fee::FeeStructure;
 use solana_sdk::hash::Hash;
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::transaction::{Transaction, SanitizedTransaction as SolanaSanitizedTransaction};
-use solana_sdk::fee::FeeStructure;
 use solana_sdk::rent_collector::RentCollector;
-use solana_compute_budget::compute_budget::ComputeBudget;
-use solana_client::rpc_client::RpcClient;
+use solana_sdk::transaction::{SanitizedTransaction as SolanaSanitizedTransaction, Transaction};
 
 use agave_feature_set::FeatureSet;
 use solana_svm::transaction_processing_result::ProcessedTransaction;
-use solana_svm::transaction_processor::{TransactionProcessingConfig, TransactionProcessingEnvironment};
-
-use crate::state::rollup_account_loader::RollUpAccountLoader;
-use crate::{ForkRollUpGraph, ReturnStruct};
-use crate::utils::helpers::{
-    get_transaction_check_results,
-    create_transaction_batch_processor,
+use solana_svm::transaction_processor::{
+    TransactionProcessingConfig, TransactionProcessingEnvironment,
 };
 
+use crate::state::rollup_account_loader::RollUpAccountLoader;
+use crate::utils::helpers::{create_transaction_batch_processor, get_transaction_check_results};
+use crate::{ForkRollUpGraph, ReturnStruct};
 
 pub struct RollUpChannel<'a> {
     /// I think you know why this is a bad idea...
@@ -32,10 +30,10 @@ impl<'a> RollUpChannel<'a> {
     }
 
     pub fn process_rollup_transfers(&self, transactions: &[Transaction]) -> Vec<ReturnStruct> {
-        
-        let sanitized = transactions.iter().map( |tx|
-            SolanaSanitizedTransaction::from_transaction_for_tests(tx.clone())
-        ).collect::<Vec<SolanaSanitizedTransaction>>();
+        let sanitized = transactions
+            .iter()
+            .map(|tx| SolanaSanitizedTransaction::from_transaction_for_tests(tx.clone()))
+            .collect::<Vec<SolanaSanitizedTransaction>>();
         // PayTube default configs.
         //
         // These can be configurable for channel customization, including
@@ -98,7 +96,6 @@ impl<'a> RollUpChannel<'a> {
         // In this case, `PayTubeTransaction` could simply implement the
         // interface, and avoid this conversion entirely.
 
-
         // Step 2: Process the SVM-compatible transactions with the SVM API.
         let results = processor.load_and_execute_sanitized_transactions(
             &account_loader,
@@ -111,7 +108,7 @@ impl<'a> RollUpChannel<'a> {
 
         // Process all transaction results
         let mut return_results = Vec::new();
-        
+
         for (i, transaction_result) in results.processing_results.iter().enumerate() {
             let tx_result = match transaction_result {
                 Ok(processed_tx) => {
@@ -121,45 +118,44 @@ impl<'a> RollUpChannel<'a> {
                             let logs = executed_tx.execution_details.log_messages.clone();
                             let status = executed_tx.execution_details.status.clone();
                             let is_success = status.is_ok();
-                            
+
                             if is_success {
                                 ReturnStruct::success(cu)
                             } else {
                                 match status {
                                     Err(err) => {
-                                        let error_msg = format!("Transaction {} failed with error: {}", i, err);
-                                        let log_msg = logs.map(|logs| logs.join("\n")).unwrap_or_default();
+                                        let error_msg =
+                                            format!("Transaction {} failed with error: {}", i, err);
+                                        let log_msg =
+                                            logs.map(|logs| logs.join("\n")).unwrap_or_default();
                                         ReturnStruct {
                                             success: false,
                                             cu,
                                             result: format!("{}\nLogs:\n{}", error_msg, log_msg),
                                         }
-                                    },
+                                    }
                                     _ => ReturnStruct::success(cu), // This shouldn't happen as we checked is_success
                                 }
                             }
-                        },
+                        }
                         ProcessedTransaction::FeesOnly(fees_only) => {
                             ReturnStruct::failure(format!(
-                                "Transaction {} failed with error: {}. Only fees were charged.", 
-                                i, 
-                                fees_only.load_error
+                                "Transaction {} failed with error: {}. Only fees were charged.",
+                                i, fees_only.load_error
                             ))
-                        },
+                        }
                     }
-                },
-                Err(err) => {
-                    ReturnStruct::failure(format!("Transaction {} failed: {}", i, err))
                 }
+                Err(err) => ReturnStruct::failure(format!("Transaction {} failed: {}", i, err)),
             };
             return_results.push(tx_result);
         }
-        
+
         // If there were no results but transactions were submitted
         if return_results.is_empty() && !transactions.is_empty() {
             return_results.push(ReturnStruct::no_results());
         }
-        
+
         return_results
 
         // Step 3: Convert the SVM API processor results into a final ledger

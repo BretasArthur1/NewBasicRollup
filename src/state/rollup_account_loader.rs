@@ -1,12 +1,9 @@
-use std::sync::RwLock;
-use std::collections::HashMap;
 use solana_client::rpc_client::RpcClient;
-use solana_sdk::{
-    pubkey::Pubkey,
-    account::AccountSharedData,
-};
-use solana_svm::transaction_processing_callback::TransactionProcessingCallback;
 use solana_sdk::account::ReadableAccount;
+use solana_sdk::{account::AccountSharedData, pubkey::Pubkey};
+use solana_svm::transaction_processing_callback::TransactionProcessingCallback;
+use std::collections::HashMap;
+use std::sync::RwLock;
 
 pub struct RollUpAccountLoader<'a> {
     cache: RwLock<HashMap<Pubkey, AccountSharedData>>,
