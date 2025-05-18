@@ -14,9 +14,14 @@ use solana_system_program::system_processor;
 use crate::ForkRollUpGraph;
 use agave_feature_set::FeatureSet;
 
-/// This function is also a mock. In the Agave validator, the bank pre-checks
-/// transactions before providing them to the SVM API. We mock this step in
-/// PayTube, since we don't need to perform such pre-checks.
+/// Generates a vector of placeholder "checked" transactions to simulate what a
+/// validator would normally do before execution (signature check, account ownership, etc).
+///
+/// In a real validator, this step ensures transactions are structurally valid
+/// before passing them to the runtime. Here, we mock that behavior so that
+/// we can run fully in-memory simulations without real pre-validation.
+///
+/// `len` defines how many mock results to return, used for simulating batches.
 pub(crate) fn get_transaction_check_results(
     len: usize,
 ) -> Vec<transaction::Result<CheckedTransactionDetails>> {
@@ -24,26 +29,27 @@ pub(crate) fn get_transaction_check_results(
     vec![transaction::Result::Ok(CheckedTransactionDetails::new(None, 5000,)); len]
 }
 
-/// This function encapsulates some initial setup required to tweak the
-/// `TransactionBatchProcessor` for use within PayTube.
+/// Creates a local, in-memory transaction processor capable of simulating
+/// compute unit usage and program execution without submitting transactions to a real RPC node.
 ///
-/// We're simply configuring the mocked fork graph on the SVM API's program
-/// cache, then adding the System program to the processor's builtins.
+/// This processor mirrors the runtime behavior of a Solana validator.
+/// It's primarily used for local CU estimation and transaction testing.
+///
+/// This is critical for features like `RpcClientExt::estimate_cu_local()`
+/// which depend on deterministic, offline simulation of a transaction.
+///
+/// `fork_graph` is the mocked ledger state.
+/// `feature_set` and `compute_budget` customize runtime behavior (e.g., instruction limits).
 pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     feature_set: &FeatureSet,
     compute_budget: &ComputeBudget,
     fork_graph: Arc<RwLock<ForkRollUpGraph>>,
 ) -> TransactionBatchProcessor<ForkRollUpGraph> {
-    // Create a new transaction batch processor.
+    // Create a new transaction batch processor for slot 1.
     //
-    // We're going to use slot 1 specifically because any programs we add will
-    // be deployed in slot 0, and they are delayed visibility until the next
-    // slot (1).
-    // This includes programs owned by BPF Loader v2, which are automatically
-    // marked as "depoyed" in slot 0.
-    // See `solana_svm::program_loader::load_program_with_pubkey` for more
-    // details.
+    // We choose slot 1 deliberately: Solana treats programs deployed in slot 0
+    // as not visible until slot 1. This ensures deployed programs are active during simulation.
     let processor = TransactionBatchProcessor::<ForkRollUpGraph>::new(
         /* slot */ 1,
         /* epoch */ 1,
@@ -55,7 +61,9 @@ pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallba
         None,
     );
 
-    // Add the system program builtin.
+    // Register the System Program as a built-in.
+    //
+    // This enables simulation of basic SOL instructions like transfers and account creation.
     processor.add_builtin(
         callbacks,
         solana_system_program::id(),
@@ -67,7 +75,10 @@ pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallba
         ),
     );
 
-    // Add the BPF Loader v2 builtin, for the SPL Token program.
+    // Register the BPF Loader v2 as a built-in.
+    //
+    // This is needed to simulate execution of BPF-based programs,
+    // including programs like SPL Token, associated token accounts, etc.
     processor.add_builtin(
         callbacks,
         solana_sdk::bpf_loader::id(),

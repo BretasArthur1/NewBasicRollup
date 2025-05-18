@@ -18,49 +18,48 @@ use crate::state::rollup_account_loader::RollUpAccountLoader;
 use crate::utils::helpers::{create_transaction_batch_processor, get_transaction_check_results};
 use crate::{ForkRollUpGraph, ReturnStruct};
 
+/// Handles a group of accounts and enables simulation of transactions
+/// using Solana's SVM runtime with preconfigured defaults.
 pub struct RollUpChannel<'a> {
-    /// I think you know why this is a bad idea...
+    /// A list of the account keys extracted from the transaction,
+    /// passed into the rollup channel for SVM simulation and processing.
     keys: Vec<Pubkey>,
+    /// Reference to an RPC client used to fetch account and cluster data.
     rpc_client: &'a RpcClient,
 }
 
 impl<'a> RollUpChannel<'a> {
+    /// Constructs a new `RollUpChannel` with a list of public keys and an RPC client reference.
     pub fn new(keys: Vec<Pubkey>, rpc_client: &'a RpcClient) -> Self {
         Self { keys, rpc_client }
     }
 
+    /// Simulates a batch of Solana transactions using the SVM runtime.
+    ///
+    /// This method:
+    /// 1. Converts `Transaction`s into `SanitizedTransaction`s
+    /// 2. Creates an SVM batch processor with default settings
+    /// 3. Executes the transactions using the processor
+    /// 4. Returns execution results, including compute units used and logs
     pub fn process_rollup_transfers(&self, transactions: &[Transaction]) -> Vec<ReturnStruct> {
+        // Step 1: Convert raw transactions into sanitized format required by the SVM processor.
         let sanitized = transactions
             .iter()
             .map(|tx| SolanaSanitizedTransaction::from_transaction_for_tests(tx.clone()))
             .collect::<Vec<SolanaSanitizedTransaction>>();
-        // PayTube default configs.
-        //
-        // These can be configurable for channel customization, including
-        // imposing resource or feature restrictions, but more commonly they
-        // would likely be hoisted from the cluster.
-        //
-        // For example purposes, they are provided as defaults here.
+
+        // Default configuration values for SVM transaction simulation.
+        // These can be overridden later if custom behavior is needed.
         let compute_budget = ComputeBudget::default();
         let feature_set = Arc::new(FeatureSet::all_enabled());
         let fee_structure = FeeStructure::default();
         let _rent_collector = RentCollector::default();
 
-        // PayTube loader/callback implementation.
-        //
-        // Required to provide the SVM API with a mechanism for loading
-        // accounts.
+        // Custom account loader implementation for fetching account data via the RPC client.
         let account_loader = RollUpAccountLoader::new(&self.rpc_client);
 
-        // Solana SVM transaction batch processor.
-        //
-        // Creates an instance of `TransactionBatchProcessor`, which can be
-        // used by PayTube to process transactions using the SVM.
-        //
-        // This allows programs such as the System and Token programs to be
-        // translated and executed within a provisioned virtual machine, as
-        // well as offers many of the same functionality as the lower-level
-        // Solana runtime.
+        // Create an SVM-compatible transaction batch processor.
+        // This is the entry point for executing transactions against the Solana runtime logic.
         let fork_graph = Arc::new(RwLock::new(ForkRollUpGraph {}));
         let processor = create_transaction_batch_processor(
             &account_loader,
@@ -70,9 +69,7 @@ impl<'a> RollUpChannel<'a> {
         );
         println!("transaction batch processor created ");
 
-        // The PayTube transaction processing runtime environment.
-        //
-        // Again, these can be configurable or hoisted from the cluster.
+        // Create a simulation environment, similar to a Solana runtime slot.
         let processing_environment = TransactionProcessingEnvironment {
             blockhash: Hash::default(),
             blockhash_lamports_per_signature: fee_structure.lamports_per_signature,
@@ -82,21 +79,13 @@ impl<'a> RollUpChannel<'a> {
             rent_collector: None,
         };
 
-        // The PayTube transaction processing config for Solana SVM.
-        //
-        // Extended configurations for even more customization of the SVM API.
+        // Use the default transaction processing config.
+        // Can be extended to support more fine-grained control.
         let processing_config = TransactionProcessingConfig::default();
 
         println!("transaction processing_config created ");
 
-        // Step 1: Convert the batch of PayTube transactions into
-        // SVM-compatible transactions for processing.
-        //
-        // In the future, the SVM API may allow for trait-based transactions.
-        // In this case, `PayTubeTransaction` could simply implement the
-        // interface, and avoid this conversion entirely.
-
-        // Step 2: Process the SVM-compatible transactions with the SVM API.
+        // Step 2: Execute the sanitized transactions using the simulated runtime.
         let results = processor.load_and_execute_sanitized_transactions(
             &account_loader,
             &sanitized,
@@ -106,7 +95,7 @@ impl<'a> RollUpChannel<'a> {
         );
         println!("Executed");
 
-        // Process all transaction results
+        // Step 3: Parse each transaction result and convert it into a ReturnStruct.
         let mut return_results = Vec::new();
 
         for (i, transaction_result) in results.processing_results.iter().enumerate() {
@@ -151,23 +140,12 @@ impl<'a> RollUpChannel<'a> {
             return_results.push(tx_result);
         }
 
-        // If there were no results but transactions were submitted
+        /// If there were no results but transactions were submitted,
+        // return a fallback result to avoid empty output.
         if return_results.is_empty() && !transactions.is_empty() {
             return_results.push(ReturnStruct::no_results());
         }
 
         return_results
-
-        // Step 3: Convert the SVM API processor results into a final ledger
-        // using `PayTubeSettler`, and settle the resulting balance differences
-        // to the Solana base chain.
-        //
-        // Here the settler is basically iterating over the transaction results
-        // to track debits and credits, but only for those transactions which
-        // were executed succesfully.
-        //
-        // The final ledger of debits and credits to each participant can then
-        // be packaged into a minimal number of settlement transactions for
-        // submission.
     }
 }

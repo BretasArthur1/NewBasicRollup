@@ -1,20 +1,26 @@
-/// Return structure for rollup transaction processing results
+/// A simple struct that encapsulates the outcome of a simulated or real transaction execution.
 ///
-/// -> This structure provides information about a transaction's execution:
-/// - Whether it was successful
-/// - The amount of compute units used
-/// - A descriptive message with detailed results or error information
+/// This is especially useful when working with local transaction simulation tools
+/// (like `ClientExt`) where you want to track:
+/// - Whether the transaction was successful
+/// - How many compute units were consumed
+/// - What the result or error message was
 pub struct ReturnStruct {
-    /// Whether the transaction completed successfully
+    /// `true` if the transaction executed successfully without runtime errors.
     pub success: bool,
-    /// The number of compute units used by the transaction
+    /// The number of compute units consumed during execution.
+    ///
+    /// This is only meaningful when `success == true`. On failure, this will be 0.
     pub cu: u64,
-    /// A descriptive result or error message
+    /// A human-readable result message, used for debugging and logs.
+    /// Can contain either success details or an error description.
     pub result: String,
 }
 
 impl ReturnStruct {
-    /// Create a success result with compute units used
+    /// Construct a successful result with the given compute unit usage.
+    ///
+    /// The compute unit count helps benchmark cost and complexity.
     pub fn success(cu: u64) -> Self {
         Self {
             success: true,
@@ -26,7 +32,7 @@ impl ReturnStruct {
         }
     }
 
-    /// Create a failure result with an error message
+    /// Construct a failed result with a specific error message.
     pub fn failure(error: impl ToString) -> Self {
         Self {
             success: false,
@@ -35,7 +41,10 @@ impl ReturnStruct {
         }
     }
 
-    /// Create a result indicating no transaction results were returned
+    /// Construct a result representing a missing or empty response.
+    ///
+    /// It can occur when SVM engine doesn't return results—e.g.,
+    /// due to a misconfigured processor, lack of transaction output, or internal error.
     pub fn no_results() -> Self {
         Self {
             success: false,
